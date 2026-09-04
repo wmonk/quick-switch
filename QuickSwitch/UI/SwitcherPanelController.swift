@@ -386,6 +386,46 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         isScrollingEnabled = false
     }
 
+    func confirm(
+        _ action: SwitcherDestructiveAction,
+        for window: TrackedWindow,
+        completion: @escaping (Bool) -> Void
+    ) {
+        let previouslyActiveApplication = NSWorkspace.shared.frontmostApplication
+
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Are you sure?"
+
+            let actionButton: NSButton
+            switch action {
+            case .closeWindow:
+                alert.informativeText = "Close “\(window.displayTitle)” in \(window.applicationName)? Unsaved changes may be lost."
+                actionButton = alert.addButton(withTitle: "Close Window")
+            case .quitApplication:
+                alert.informativeText = "Quit \(window.applicationName)? All of its windows will close and unsaved changes may be lost."
+                actionButton = alert.addButton(withTitle: "Quit \(window.applicationName)")
+            }
+
+            actionButton.hasDestructiveAction = true
+            let cancelButton = alert.addButton(withTitle: "Cancel")
+            cancelButton.keyEquivalent = "\u{1b}"
+
+            NSApp.activate()
+            alert.window.level = .floating
+            let confirmed = alert.runModal() == .alertFirstButtonReturn
+
+            if let previouslyActiveApplication,
+               previouslyActiveApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+               !previouslyActiveApplication.isTerminated {
+                previouslyActiveApplication.activate()
+            }
+
+            completion(confirmed)
+        }
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
         windows.count
     }

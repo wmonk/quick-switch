@@ -116,7 +116,7 @@ final class KeyboardShortcutControllerTests: XCTestCase {
         XCTAssertEqual(panel.hideCount, 1)
     }
 
-    func testCommandWAndQAreConsumedWhileSwitcherIsOpen() {
+    func testWConfirmsBeforeClosingSelectedWindow() {
         let windows = makeWindows(titles: ["Current", "Previous", "Older"])
         let catalog = CatalogRecorder(windows: windows, frontmostProcessIdentifier: 42)
         let panel = PanelRecorder()
@@ -124,18 +124,73 @@ final class KeyboardShortcutControllerTests: XCTestCase {
 
         _ = controller.handleEventTap(type: .keyDown, event: keyEvent(code: 48))
 
-        let wDown = keyEvent(code: 13)
-        let wUp = keyEvent(code: 13, keyDown: false)
-        let qDown = keyEvent(code: 12)
-        let qUp = keyEvent(code: 12, keyDown: false)
+        XCTAssertNil(controller.handleEventTap(type: .keyDown, event: keyEvent(code: 13)))
+        XCTAssertNil(controller.handleEventTap(type: .keyUp, event: keyEvent(code: 13, keyDown: false)))
+        XCTAssertEqual(
+            panel.confirmationRequests,
+            [ConfirmationRequest(action: .closeWindow, windowID: windows[1].id)]
+        )
+        XCTAssertEqual(panel.hideCount, 1)
+        XCTAssertTrue(catalog.closedWindowIDs.isEmpty)
 
-        XCTAssertNil(controller.handleEventTap(type: .keyDown, event: wDown))
-        XCTAssertNil(controller.handleEventTap(type: .keyUp, event: wUp))
-        XCTAssertNil(controller.handleEventTap(type: .keyDown, event: qDown))
-        XCTAssertNil(controller.handleEventTap(type: .keyUp, event: qUp))
-        XCTAssertTrue(panel.updatedSelections.isEmpty)
-        XCTAssertEqual(panel.hideCount, 0)
+        _ = controller.handleEventTap(type: .flagsChanged, event: commandReleaseEvent())
         XCTAssertTrue(catalog.activatedWindowIDs.isEmpty)
+
+        panel.respondToConfirmation(confirmed: true)
+        XCTAssertEqual(catalog.closedWindowIDs, [windows[1].id])
+        XCTAssertTrue(catalog.quitApplicationWindowIDs.isEmpty)
+    }
+
+    func testQConfirmsBeforeQuittingSelectedApplication() {
+        let windows = makeWindows(titles: ["Current", "Previous", "Older"])
+        let catalog = CatalogRecorder(windows: windows, frontmostProcessIdentifier: 42)
+        let panel = PanelRecorder()
+        let controller = KeyboardShortcutController(catalog: catalog, panelController: panel)
+
+        _ = controller.handleEventTap(type: .keyDown, event: keyEvent(code: 48))
+
+        XCTAssertNil(controller.handleEventTap(type: .keyDown, event: keyEvent(code: 12)))
+        XCTAssertNil(controller.handleEventTap(type: .keyUp, event: keyEvent(code: 12, keyDown: false)))
+        XCTAssertEqual(
+            panel.confirmationRequests,
+            [ConfirmationRequest(action: .quitApplication, windowID: windows[1].id)]
+        )
+        XCTAssertTrue(catalog.quitApplicationWindowIDs.isEmpty)
+
+        panel.respondToConfirmation(confirmed: true)
+        XCTAssertEqual(catalog.quitApplicationWindowIDs, [windows[1].id])
+        XCTAssertTrue(catalog.closedWindowIDs.isEmpty)
+    }
+
+    func testCancellingDestructiveConfirmationLeavesWindowAndApplicationOpen() {
+        let windows = makeWindows(titles: ["Current", "Previous"])
+        let catalog = CatalogRecorder(windows: windows, frontmostProcessIdentifier: 42)
+        let panel = PanelRecorder()
+        let controller = KeyboardShortcutController(catalog: catalog, panelController: panel)
+
+        _ = controller.handleEventTap(type: .keyDown, event: keyEvent(code: 48))
+        _ = controller.handleEventTap(type: .keyDown, event: keyEvent(code: 13))
+        panel.respondToConfirmation(confirmed: false)
+
+        XCTAssertTrue(catalog.activatedWindowIDs.isEmpty)
+        XCTAssertTrue(catalog.closedWindowIDs.isEmpty)
+        XCTAssertTrue(catalog.quitApplicationWindowIDs.isEmpty)
+    }
+
+    func testWAndQRemainConsumedWhileConfirmationIsOpen() {
+        let windows = makeWindows(titles: ["Current", "Previous"])
+        let catalog = CatalogRecorder(windows: windows, frontmostProcessIdentifier: 42)
+        let panel = PanelRecorder()
+        let controller = KeyboardShortcutController(catalog: catalog, panelController: panel)
+
+        _ = controller.handleEventTap(type: .keyDown, event: keyEvent(code: 48))
+        _ = controller.handleEventTap(type: .keyDown, event: keyEvent(code: 13))
+
+        XCTAssertNil(controller.handleEventTap(type: .keyDown, event: keyEvent(code: 13)))
+        XCTAssertNil(controller.handleEventTap(type: .keyUp, event: keyEvent(code: 13, keyDown: false)))
+        XCTAssertNil(controller.handleEventTap(type: .keyDown, event: keyEvent(code: 12)))
+        XCTAssertNil(controller.handleEventTap(type: .keyUp, event: keyEvent(code: 12, keyDown: false)))
+        XCTAssertEqual(panel.confirmationRequests.count, 1)
     }
 
     func testCommandWAndQPassThroughWhileSwitcherIsClosed() {
@@ -197,6 +252,8 @@ private final class CatalogRecorder: WindowCatalogProviding {
     private let windows: [TrackedWindow]
     private(set) var requestedScopes: [WindowScope] = []
     private(set) var activatedWindowIDs: [UUID] = []
+    private(set) var closedWindowIDs: [UUID] = []
+    private(set) var quitApplicationWindowIDs: [UUID] = []
 
     init(windows: [TrackedWindow], frontmostProcessIdentifier: pid_t?) {
         self.windows = windows
@@ -211,6 +268,19 @@ private final class CatalogRecorder: WindowCatalogProviding {
     func activate(_ window: TrackedWindow) {
         activatedWindowIDs.append(window.id)
     }
+
+    func close(_ window: TrackedWindow) {
+        closedWindowIDs.append(window.id)
+    }
+
+    func quitApplication(owning window: TrackedWindow) {
+        quitApplicationWindowIDs.append(window.id)
+    }
+}
+
+private struct ConfirmationRequest: Equatable {
+    let action: SwitcherDestructiveAction
+    let windowID: UUID
 }
 
 private final class PanelRecorder: SwitcherPanelPresenting {
@@ -218,8 +288,10 @@ private final class PanelRecorder: SwitcherPanelPresenting {
     private(set) var shownSelection: Int?
     private(set) var updatedSelections: [Int] = []
     private(set) var hideCount = 0
+    private(set) var confirmationRequests: [ConfirmationRequest] = []
     private var onHover: ((Int) -> Void)?
     private var onClick: ((Int) -> Void)?
+    private var confirmationCompletion: ((Bool) -> Void)?
 
     func setInteractionHandlers(
         onHover: @escaping (Int) -> Void,
@@ -248,5 +320,20 @@ private final class PanelRecorder: SwitcherPanelPresenting {
 
     func hide() {
         hideCount += 1
+    }
+
+    func confirm(
+        _ action: SwitcherDestructiveAction,
+        for window: TrackedWindow,
+        completion: @escaping (Bool) -> Void
+    ) {
+        confirmationRequests.append(ConfirmationRequest(action: action, windowID: window.id))
+        confirmationCompletion = completion
+    }
+
+    func respondToConfirmation(confirmed: Bool) {
+        let completion = confirmationCompletion
+        confirmationCompletion = nil
+        completion?(confirmed)
     }
 }

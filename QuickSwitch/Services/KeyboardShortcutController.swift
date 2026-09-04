@@ -16,6 +16,13 @@ protocol WindowCatalogProviding: AnyObject {
     var frontmostProcessIdentifier: pid_t? { get }
     func orderedWindows(in scope: WindowScope) -> [TrackedWindow]
     func activate(_ window: TrackedWindow)
+    func close(_ window: TrackedWindow)
+    func quitApplication(owning window: TrackedWindow)
+}
+
+enum SwitcherDestructiveAction: Equatable {
+    case closeWindow
+    case quitApplication
 }
 
 protocol SwitcherPanelPresenting: AnyObject {
@@ -26,6 +33,11 @@ protocol SwitcherPanelPresenting: AnyObject {
     func show(windows: [TrackedWindow], selectedIndex: Int)
     func updateSelection(_ selectedIndex: Int)
     func hide()
+    func confirm(
+        _ action: SwitcherDestructiveAction,
+        for window: TrackedWindow,
+        completion: @escaping (Bool) -> Void
+    )
 }
 
 extension WindowCatalog: WindowCatalogProviding {}
@@ -50,9 +62,18 @@ final class KeyboardShortcutController {
         }
     }
 
-    private enum SuppressedWhileSwitchingKey: Int64 {
+    private enum DestructiveActionKey: Int64 {
         case quit = 12 // Q
         case close = 13 // W
+
+        var action: SwitcherDestructiveAction {
+            switch self {
+            case .quit:
+                return .quitApplication
+            case .close:
+                return .closeWindow
+            }
+        }
     }
 
     private let catalog: WindowCatalogProviding
@@ -61,6 +82,7 @@ final class KeyboardShortcutController {
     private var runLoopSource: CFRunLoopSource?
     private var selection: SelectionCycle<TrackedWindow>?
     private var activeShortcut: Shortcut?
+    private var isConfirmingDestructiveAction = false
 
     init(catalog: WindowCatalogProviding, panelController: SwitcherPanelPresenting) {
         self.catalog = catalog
@@ -165,7 +187,11 @@ final class KeyboardShortcutController {
             return nil
         }
 
-        if selection != nil, SuppressedWhileSwitchingKey(rawValue: keyCode) != nil {
+        if let actionKey = DestructiveActionKey(rawValue: keyCode),
+           selection != nil || isConfirmingDestructiveAction {
+            if type == .keyDown, !isConfirmingDestructiveAction {
+                requestConfirmation(for: actionKey.action)
+            }
             return nil
         }
 
@@ -241,6 +267,28 @@ final class KeyboardShortcutController {
 
         if let selectedWindow {
             catalog.activate(selectedWindow)
+        }
+    }
+
+    private func requestConfirmation(for action: SwitcherDestructiveAction) {
+        guard let selectedWindow = selection?.selected else { return }
+
+        panelController.hide()
+        selection = nil
+        activeShortcut = nil
+        isConfirmingDestructiveAction = true
+
+        panelController.confirm(action, for: selectedWindow) { [weak self] confirmed in
+            guard let self else { return }
+            self.isConfirmingDestructiveAction = false
+            guard confirmed else { return }
+
+            switch action {
+            case .closeWindow:
+                self.catalog.close(selectedWindow)
+            case .quitApplication:
+                self.catalog.quitApplication(owning: selectedWindow)
+            }
         }
     }
 

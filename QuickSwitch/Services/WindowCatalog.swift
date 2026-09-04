@@ -201,6 +201,42 @@ final class WindowCatalog {
         }
     }
 
+    func close(_ window: TrackedWindow) {
+        guard windows.contains(where: { $0.id == window.id }) else {
+            scheduleBackgroundRefresh()
+            return
+        }
+
+        let element = window.element
+        focusQueue.async { [weak self] in
+            AXUIElementSetMessagingTimeout(element, 0.1)
+            guard let closeButton: AXUIElement = AXHelpers.value(
+                kAXCloseButtonAttribute as CFString,
+                from: element
+            ) else {
+                DispatchQueue.main.async {
+                    self?.scheduleBackgroundRefresh()
+                }
+                return
+            }
+
+            AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
+            DispatchQueue.main.async {
+                self?.scheduleBackgroundRefresh()
+            }
+        }
+    }
+
+    func quitApplication(owning window: TrackedWindow) {
+        guard windows.contains(where: { $0.id == window.id }),
+              window.processIdentifier != ownProcessIdentifier else {
+            scheduleBackgroundRefresh()
+            return
+        }
+
+        window.application.terminate()
+    }
+
     func receiveAccessibilityNotification(element: AXUIElement, notification: CFString) {
         let notificationName = notification as String
 

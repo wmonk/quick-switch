@@ -23,7 +23,7 @@ Quick Switch has two jobs:
 - `Command-Tab` cycles through every switchable window in most-recently-used order.
 - `Command-Backquote` cycles through windows belonging to the current application in most-recently-used order.
 
-While the switcher is open, use `Tab`, `J`, or Down Arrow to move forward and backquote, `K`, or Up Arrow to move backward. Hovering selects a window, clicking activates it, releasing Command activates the selection, and Escape cancels.
+While the switcher is open, use `Tab`, `J`, or Down Arrow to move forward and backquote, `K`, or Up Arrow to move backward. Press `W` to close the selected window or `Q` to quit its application; Quick Switch asks for confirmation before either action. Hovering selects a window, clicking activates it, releasing Command activates the selection, and Escape cancels.
 
 It is written in Swift and AppKit. macOS 26 gets a native Liquid Glass surface, with a visual-effect fallback on earlier supported releases.
 
