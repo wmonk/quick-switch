@@ -1,8 +1,13 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum PreferenceKey {
+        static let confirmDestructiveActions = "confirmDestructiveActions"
+    }
+
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var confirmationMenuItem: NSMenuItem?
     private var catalog: WindowCatalog?
     private var panelController: SwitcherPanelController?
     private var keyboardController: KeyboardShortcutController?
@@ -49,6 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // so shutdown reaches applicationWillTerminate and restores Command-Tab.
         ProcessInfo.processInfo.disableSuddenTermination()
 
+        UserDefaults.standard.register(defaults: [
+            PreferenceKey.confirmDestructiveActions: true
+        ])
+
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
 
@@ -79,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             catalog: catalog,
             panelController: panelController
         )
+        keyboardController.confirmsDestructiveActions = confirmsDestructiveActions
         keyboardController.onEventTapFailure = { [weak self] in
             self?.statusMenuItem?.title = "Keyboard access unavailable"
         }
@@ -126,6 +136,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionItem.target = self
         menu.addItem(permissionItem)
 
+        let confirmationItem = NSMenuItem(
+            title: "Confirm Before Closing or Quitting",
+            action: #selector(toggleDestructiveActionConfirmation(_:)),
+            keyEquivalent: ""
+        )
+        confirmationItem.target = self
+        confirmationItem.state = confirmsDestructiveActions ? .on : .off
+        menu.addItem(confirmationItem)
+
         let quitItem = NSMenuItem(
             title: "Quit Quick Switch",
             action: #selector(quit),
@@ -137,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         self.statusItem = statusItem
         statusMenuItem = status
+        confirmationMenuItem = confirmationItem
     }
 
     private func runDiagnosticsAndExit() {
@@ -199,7 +219,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionWindowController.show()
     }
 
+    @objc private func toggleDestructiveActionConfirmation(_ sender: NSMenuItem) {
+        let enabled = !confirmsDestructiveActions
+        UserDefaults.standard.set(enabled, forKey: PreferenceKey.confirmDestructiveActions)
+        sender.state = enabled ? .on : .off
+        confirmationMenuItem?.state = sender.state
+        keyboardController?.confirmsDestructiveActions = enabled
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private var confirmsDestructiveActions: Bool {
+        UserDefaults.standard.bool(forKey: PreferenceKey.confirmDestructiveActions)
     }
 }

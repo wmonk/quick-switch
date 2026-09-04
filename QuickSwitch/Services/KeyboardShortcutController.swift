@@ -45,6 +45,7 @@ extension SwitcherPanelController: SwitcherPanelPresenting {}
 
 final class KeyboardShortcutController {
     var onEventTapFailure: (() -> Void)?
+    var confirmsDestructiveActions = true
 
     private enum Shortcut: Int64 {
         case commandTab = 48
@@ -83,6 +84,7 @@ final class KeyboardShortcutController {
     private var selection: SelectionCycle<TrackedWindow>?
     private var activeShortcut: Shortcut?
     private var isConfirmingDestructiveAction = false
+    private var consumedDestructiveKeyCode: Int64?
 
     init(catalog: WindowCatalogProviding, panelController: SwitcherPanelPresenting) {
         self.catalog = catalog
@@ -167,13 +169,30 @@ final class KeyboardShortcutController {
         }
 
         if type == .flagsChanged {
-            if selection != nil && !event.flags.contains(.maskCommand) {
-                commitSelection()
+            if !event.flags.contains(.maskCommand) {
+                consumedDestructiveKeyCode = nil
+                if selection != nil, !isConfirmingDestructiveAction {
+                    commitSelection()
+                }
             }
             return Unmanaged.passUnretained(event)
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        if consumedDestructiveKeyCode == keyCode {
+            if type == .keyUp {
+                consumedDestructiveKeyCode = nil
+            }
+            return nil
+        }
+
+        if isConfirmingDestructiveAction {
+            if DestructiveActionKey(rawValue: keyCode) != nil {
+                return nil
+            }
+            return Unmanaged.passUnretained(event)
+        }
 
         if type == .keyDown, keyCode == 53, selection != nil {
             cancelSelection()
@@ -188,9 +207,10 @@ final class KeyboardShortcutController {
         }
 
         if let actionKey = DestructiveActionKey(rawValue: keyCode),
-           selection != nil || isConfirmingDestructiveAction {
-            if type == .keyDown, !isConfirmingDestructiveAction {
-                requestConfirmation(for: actionKey.action)
+           selection != nil {
+            if type == .keyDown {
+                consumedDestructiveKeyCode = keyCode
+                requestDestructiveAction(actionKey.action)
             }
             return nil
         }
@@ -270,12 +290,14 @@ final class KeyboardShortcutController {
         }
     }
 
-    private func requestConfirmation(for action: SwitcherDestructiveAction) {
+    private func requestDestructiveAction(_ action: SwitcherDestructiveAction) {
         guard let selectedWindow = selection?.selected else { return }
 
-        panelController.hide()
-        selection = nil
-        activeShortcut = nil
+        guard confirmsDestructiveActions else {
+            perform(action, on: selectedWindow)
+            return
+        }
+
         isConfirmingDestructiveAction = true
 
         panelController.confirm(action, for: selectedWindow) { [weak self] confirmed in
@@ -283,19 +305,55 @@ final class KeyboardShortcutController {
             self.isConfirmingDestructiveAction = false
             guard confirmed else { return }
 
+            self.perform(action, on: selectedWindow)
+        }
+    }
+
+    private func perform(_ action: SwitcherDestructiveAction, on window: TrackedWindow) {
+        switch action {
+        case .closeWindow:
+            catalog.close(window)
+        case .quitApplication:
+            catalog.quitApplication(owning: window)
+        }
+
+        removeAffectedWindows(for: action, selectedWindow: window)
+    }
+
+    private func removeAffectedWindows(
+        for action: SwitcherDestructiveAction,
+        selectedWindow: TrackedWindow
+    ) {
+        guard var selection else { return }
+
+        selection.removeAll { window in
             switch action {
             case .closeWindow:
-                self.catalog.close(selectedWindow)
+                return window.id == selectedWindow.id
             case .quitApplication:
-                self.catalog.quitApplication(owning: selectedWindow)
+                return window.processIdentifier == selectedWindow.processIdentifier
             }
         }
+
+        guard !selection.elements.isEmpty else {
+            panelController.hide()
+            self.selection = nil
+            activeShortcut = nil
+            return
+        }
+
+        self.selection = selection
+        panelController.show(
+            windows: selection.elements,
+            selectedIndex: selection.selectedIndex
+        )
     }
 
     private func cancelSelection() {
         panelController.hide()
         selection = nil
         activeShortcut = nil
+        consumedDestructiveKeyCode = nil
     }
 
     private func eventMask(for types: [CGEventType]) -> CGEventMask {

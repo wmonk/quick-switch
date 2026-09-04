@@ -34,4 +34,32 @@ final class SelectionCycleTests: XCTestCase {
         single.advance(reverse: true)
         XCTAssertEqual(single.selected, 42)
     }
+
+    func testRemovingSelectionSelectsTheNextRemainingElement() {
+        var cycle = SelectionCycle(elements: ["first", "selected", "next", "last"], reverse: false)
+
+        cycle.removeAll { $0 == "selected" }
+
+        XCTAssertEqual(cycle.elements, ["first", "next", "last"])
+        XCTAssertEqual(cycle.selected, "next")
+    }
+
+    func testRemovingSelectionAndEarlierElementsStillSelectsTheNextRemainingElement() {
+        var cycle = SelectionCycle(elements: ["same app", "same app", "same app", "next", "last"], reverse: false)
+        cycle.select(index: 2)
+
+        cycle.removeAll { $0 == "same app" }
+
+        XCTAssertEqual(cycle.elements, ["next", "last"])
+        XCTAssertEqual(cycle.selected, "next")
+    }
+
+    func testRemovingTheLastSelectionFallsBackToThePreviousElement() {
+        var cycle = SelectionCycle(elements: ["first", "last"], reverse: true)
+
+        cycle.removeAll { $0 == "last" }
+
+        XCTAssertEqual(cycle.elements, ["first"])
+        XCTAssertEqual(cycle.selected, "first")
+    }
 }

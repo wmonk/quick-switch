@@ -2,7 +2,7 @@ import Foundation
 
 /// The selection behavior shared by both global and in-application switchers.
 struct SelectionCycle<Element> {
-    let elements: [Element]
+    private(set) var elements: [Element]
     private(set) var selectedIndex: Int
 
     init(elements: [Element], reverse: Bool) {
@@ -32,5 +32,25 @@ struct SelectionCycle<Element> {
     mutating func select(index: Int) {
         guard elements.indices.contains(index) else { return }
         selectedIndex = index
+    }
+
+    mutating func removeAll(where shouldRemove: (Element) -> Bool) {
+        let previousSelectedIndex = selectedIndex
+        var retainedElements: [Element] = []
+        retainedElements.reserveCapacity(elements.count)
+        var retainedBeforeSelection = 0
+
+        for (index, element) in elements.enumerated() {
+            guard !shouldRemove(element) else { continue }
+            if index < previousSelectedIndex {
+                retainedBeforeSelection += 1
+            }
+            retainedElements.append(element)
+        }
+
+        elements = retainedElements
+        selectedIndex = elements.isEmpty
+            ? 0
+            : min(retainedBeforeSelection, elements.count - 1)
     }
 }
