@@ -18,6 +18,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="screenshot.png" alt="Quick Switch showing a list of open macOS windows">
+</p>
+
 Quick Switch has two jobs:
 
 - `Command-Tab` cycles through every switchable window in most-recently-used order.
